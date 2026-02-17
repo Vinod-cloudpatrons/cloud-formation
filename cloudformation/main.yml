@@ -158,6 +158,10 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 172.25.0.0/20
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
 
   AppSG:
     Type: AWS::EC2::SecurityGroup
