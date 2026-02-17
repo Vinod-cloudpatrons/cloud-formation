@@ -138,26 +138,26 @@ Resources:
       GroupDescription: VPN SG
       VpcId: !Ref VPC
       SecurityGroupIngress:
+
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-		- IpProtocol: tcp
+
+        - IpProtocol: tcp
           FromPort: 943
           ToPort: 943
           CidrIp: 0.0.0.0/0
+
         - IpProtocol: udp
           FromPort: 1194
           ToPort: 1194
           CidrIp: 0.0.0.0/0
+
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 172.25.0.0/20
-        - IpProtocol: tcp
-          FromPort: 80		
-          ToPort: 80
-		  CidrIp: 0.0.0.0/0
 
   AppSG:
     Type: AWS::EC2::SecurityGroup
