@@ -31,6 +31,6 @@ jobs:
         run: |
           aws cloudformation deploy \
             --template-file cloudformation/main.yml \
-            --stack-name demo-cf-stack-infra \
+            --stack-name stack-CF \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
