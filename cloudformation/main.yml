@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Complete Enterprise Infra - VPC, ALB, WAF, VPN, App, SQL, Syslog, NAT (AP-SOUTH-1)
+
+Resources:
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.25.0.0/20
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: demo-cf-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: demo-cf-igw
+
+  AttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.25.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: demo-cf-public-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.25.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: demo-cf-public-2
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.25.3.0/24
+      Tags:
+        - Key: Name
+          Value: demo-cf-private-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 172.25.4.0/24
+      Tags:
+        - Key: Name
+          Value: demo-cf-private-2
+
+  PublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachIGW
+    Properties:
+      RouteTableId: !Ref PublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRT
+
+  PublicSubnetAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRT
+
+  NATEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  PrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NATGateway
+    Properties:
+      RouteTableId: !Ref PrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRT
+
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  VPNSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: VPN SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  AppSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: App SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          SourceSecurityGroupId: !Ref VPNSG
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSG
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 172.25.0.0/20
+
+  SyslogSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Syslog SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 514
+          ToPort: 514
+          CidrIp: 172.25.0.0/20
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 172.25.0.0/20
+          
+  SQLSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SQL SG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 1433
+          ToPort: 1433
+          SourceSecurityGroupId: !Ref AppSG
+        
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSG
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckPath: /
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: demo-cf-waf
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: demo-waf
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: AWSManagedRules
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: common
+            SampledRequestsEnabled: true
+
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref ALB
+      WebACLArn: !GetAtt WebACL.Arn
+
+  AppServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-07d145cbe03055213
+      InstanceType: t3.medium
+      KeyName: cf-demo-key
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref AppSG
+      Tags:
+        - Key: Name
+          Value: demo-cf-app-server
+      UserData:
+        Fn::Base64: |
+          <powershell>
+          Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+          Set-Content -Path "C:\inetpub\wwwroot\index.html" -Value "Demo CF App Server - IIS OK"
+          </powershell>
+
+  SQLServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-07d145cbe03055213
+      InstanceType: t3.large
+      KeyName: cf-demo-key
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref SQLSG
+      Tags:
+        - Key: Name
+          Value: demo-cf-SQL-server
+
+  SyslogServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0317b0f0a0144b137
+      InstanceType: t3.small
+      KeyName: cf-demo-key
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref SyslogSG
+      Tags:
+        - Key: Name
+          Value: demo-cf-SyslogServer
+
+  VPNServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-04e71ab8d52a5b353
+      InstanceType: t3.small
+      KeyName: cf-demo-key
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref VPNSG
+      Tags:
+        - Key: Name
+          Value: demo-cf-VPNServer
+          
+  DemoCFLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: demo-cf-launch-template
+      LaunchTemplateData:
+        ImageId: ami-07d145cbe03055213
+        InstanceType: t3.medium
+        KeyName: cf-demo-key
+        SecurityGroupIds:
+          - !Ref AppSG
+
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 50
+              VolumeType: gp3
+              Encrypted: true
+              KmsKeyId: alias/aws/ebs
+
+        UserData:
+          Fn::Base64: |
+            <powershell>
+            Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+            Start-Service W3SVC
+            Set-Content -Path "C:\inetpub\wwwroot\index.html" -Value "ASG App Server - IIS Healthy"
+            </powershell>
+
+
+  DemoCFAppASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: demo-cf-app-asg
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref DemoCFLaunchTemplate
+        Version: !GetAtt DemoCFLaunchTemplate.LatestVersionNumber
+      MinSize: "1"
+      MaxSize: "3"
+      DesiredCapacity: "1"
+      TargetGroupARNs:
+        - !Ref AppTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+
+  DemoCFScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref DemoCFAppASG
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+        DisableScaleIn: false
